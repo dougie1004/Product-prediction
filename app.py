@@ -2,37 +2,32 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import statsmodels.api as sm
-import matplotlib.pyplot as plt
-import matplotlib.font_manager as fm
-import seaborn as sns
-import os
+import plotly.graph_objects as go
+import plotly.express as px
 
 # -----------------------------------------------------------------------------
-# 1. 환경 설정 (폰트 및 스타일)
+# 1. 페이지 설정 (Wide Mode & CSS Hack for Clean Look)
 # -----------------------------------------------------------------------------
-@st.cache_resource
-def get_korean_font():
-    font_url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
-    font_path = "NanumGothic-Regular.ttf"
-    if not os.path.exists(font_path):
-        import urllib.request
-        urllib.request.urlretrieve(font_url, font_path)
-    fm.fontManager.addfont(font_path)
-    return fm.FontProperties(fname=font_path).get_name()
+st.set_page_config(page_title="Executive Production Dashboard", layout="wide")
 
-font_name = get_korean_font()
-plt.rc('font', family=font_name)
-plt.rcParams['axes.unicode_minus'] = False
-
-# Seaborn 스타일 설정 (깔끔한 디자인)
-sns.set_style("whitegrid")
-plt.rcParams['font.family'] = font_name # Seaborn 적용 후 폰트 재설정
+# CSS로 여백 줄이고 깔끔하게 만들기
+st.markdown("""
+<style>
+    .block-container {padding-top: 1rem; padding-bottom: 0rem;}
+    h1 {font-size: 1.8rem !important;}
+    h3 {font-size: 1.2rem !important; margin-bottom: 0px;}
+    div[data-testid="metric-container"] {
+        background-color: #f8f9fa;
+        border: 1px solid #dee2e6;
+        padding: 10px;
+        border-radius: 5px;
+    }
+</style>
+""", unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 2. 데이터 및 모델링
+# 2. 데이터 및 모델링 (Back-end)
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="생산량 예측 대시보드", layout="wide")
-
 # (1) 데이터 준비
 np.random.seed(123)
 n = 30
@@ -44,38 +39,39 @@ df = pd.DataFrame({
     'hour': np.random.choice(range(160, 201), n)
 })
 
-# (2) 전처리
+# (2) 전처리 & 모델링
 drop_indices = [16, 19, 22]
 df_clean = df.drop(drop_indices, errors='ignore').reset_index(drop=True)
 
-# (3) 모델 학습
 X = df_clean[['yield', 'productivity', 'workforce', 'hour']]
 y = df_clean['production']
 X = sm.add_constant(X)
 model = sm.OLS(y, X).fit()
 
+# 데이터 평균값 (기준점용)
+means = df_clean.mean()
+
 # -----------------------------------------------------------------------------
-# 3. 사이드바 (입력 컨트롤) - 공간 절약
+# 3. 사이드바 (Input)
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.header("🎛️ 시뮬레이션 설정")
-    st.info("조건을 변경하면 실시간으로 반영됩니다.")
+    st.header("🎛️ Simulation Control")
+    st.markdown("---")
     
     input_yield = st.slider("수율 (Yield, %)", 80.0, 95.0, 88.0, step=0.1)
     input_prod = st.slider("생산성 (Productivity)", 1.0, 2.0, 1.5, step=0.1)
-    input_wf = st.slider("투입 인원 (Workforce, 명)", 40, 60, 50, step=1)
-    input_hour = st.slider("작업 시간 (Hour, 시간)", 160, 200, 180, step=1)
+    input_wf = st.slider("투입 인원 (Workforce)", 40, 60, 50, step=1)
+    input_hour = st.slider("작업 시간 (Hour)", 160, 200, 180, step=1)
     
     st.markdown("---")
-    with st.expander("ℹ️ 모델 통계 정보"):
-        st.caption(f"R-squared: {model.rsquared:.3f}")
-        st.caption("Data Source: 2020.01 ~ 2022.04")
+    st.caption(f"Model Accuracy ($R^2$): **{model.rsquared:.2f}**")
+    st.caption("Based on 28 months data")
 
 # -----------------------------------------------------------------------------
-# 4. 메인 대시보드 (결과 시각화)
+# 4. 메인 대시보드 (Dashboard UI)
 # -----------------------------------------------------------------------------
-st.title("📊 참치 생산 실적 예측 대시보드")
-st.markdown("##### AI 기반 생산량 예측 및 공정 변수 진단")
+st.title("🏭 생산 실적 예측 대시보드")
+st.markdown("AI Model Prediction based on Operational Inputs")
 
 # (1) 예측 계산
 input_data = pd.DataFrame({'const': 1.0, 'yield': [input_yield], 'productivity': [input_prod], 'workforce': [input_wf], 'hour': [input_hour]})
@@ -84,79 +80,110 @@ pred_df = predictions.summary_frame(alpha=0.05)
 pred_val = pred_df['mean'][0]
 lower_val, upper_val = pred_df['obs_ci_lower'][0], pred_df['obs_ci_upper'][0]
 
-# (2) 상단: 핵심 지표 (KPI)
-kpi1, kpi2, kpi3 = st.columns(3)
-kpi1.metric("📉 최소 예상 (Risk)", f"{lower_val:.1f} 톤")
-kpi2.metric("🎯 예측 생산량 (Target)", f"{pred_val:.1f} 톤", delta_color="normal")
-kpi3.metric("📈 최대 예상 (Max)", f"{upper_val:.1f} 톤")
+# --- SECTION 1: 핵심 KPI (Top Row) ---
+col1, col2, col3, col4 = st.columns(4)
+
+with col1:
+    st.metric("예측 생산량 (Target)", f"{pred_val:.1f} 톤", delta=f"{pred_val - means['production']:.1f} vs Avg")
+with col2:
+    st.metric("최소 보장 (Risk Min)", f"{lower_val:.1f} 톤", delta="- Conservative", delta_color="off")
+with col3:
+    st.metric("최대 가능 (Max)", f"{upper_val:.1f} 톤", delta="+ Optimistic", delta_color="off")
+with col4:
+    # 달성률 (가상의 목표 100톤 대비)
+    achievement = (pred_val / 100) * 100
+    st.metric("목표 달성률 (Ref. 100t)", f"{achievement:.1f}%")
 
 st.markdown("---")
 
-# (3) 중단: 메인 예측 그래프 (Slim Layout)
-c1, c2 = st.columns([3, 1]) # 그래프 공간을 넓게, 설명 공간을 좁게
+# --- SECTION 2: 메인 게이지 차트 & 시계열 (Middle Row) ---
+c_left, c_right = st.columns([1, 2])
 
-with c1:
-    st.subheader("예측 구간 시각화")
-    fig_main, ax = plt.subplots(figsize=(10, 1.5)) # 높이를 매우 낮게 설정 (Slim)
-    
-    # 그라데이션 느낌의 바 차트
-    ax.barh(0, pred_val, color='#00C853', alpha=0.8, height=0.6, label='예측값')
-    
-    # 에러바 (신뢰구간)
-    ax.errorbar(pred_val, 0, xerr=[[pred_val - lower_val], [upper_val - pred_val]], 
-                fmt='o', color='#D50000', ecolor='gray', elinewidth=2, capsize=5, markersize=8)
-    
-    # 텍스트 레이블 (바 끝에 표시)
-    ax.text(pred_val + 2, 0, f"{pred_val:.1f} 톤", va='center', fontweight='bold', fontsize=12, color='#1b5e20')
-    
-    # 스타일링
-    ax.set_yticks([]) # Y축 라벨 제거
-    ax.set_xlim(lower_val * 0.9, upper_val * 1.1)
-    ax.set_xlabel("생산량 (톤)")
-    ax.grid(axis='x', linestyle='--', alpha=0.5)
-    
-    # 테두리 제거 (깔끔하게)
-    sns.despine(left=True, bottom=False)
-    st.pyplot(fig_main)
+with c_left:
+    st.subheader("🎯 예측 계기판 (Gauge)")
+    # Plotly Gauge Chart (자동차 속도계 스타일)
+    fig_gauge = go.Figure(go.Indicator(
+        mode = "gauge+number",
+        value = pred_val,
+        domain = {'x': [0, 1], 'y': [0, 1]},
+        title = {'text': "Predicted Production", 'font': {'size': 16}},
+        gauge = {
+            'axis': {'range': [lower_val*0.8, upper_val*1.1], 'tickwidth': 1, 'tickcolor': "darkblue"},
+            'bar': {'color': "#2ecc71"}, # 초록색 바
+            'bgcolor': "white",
+            'borderwidth': 2,
+            'bordercolor': "gray",
+            'steps': [
+                {'range': [lower_val*0.8, lower_val], 'color': '#ffcdd2'}, # 위험구간 색상
+                {'range': [lower_val, upper_val], 'color': '#f1f8e9'} # 안전구간 색상
+            ],
+            'threshold': {
+                'line': {'color': "red", 'width': 4},
+                'thickness': 0.75,
+                'value': pred_val
+            }
+        }
+    ))
+    fig_gauge.update_layout(height=280, margin=dict(l=20, r=20, t=30, b=20))
+    st.plotly_chart(fig_gauge, use_container_width=True)
 
-with c2:
-    st.info("""
-    **그래프 보는 법**
-    * **초록 막대:** 예측값
-    * **빨간 점:** 95% 신뢰구간
-    """)
+with c_right:
+    st.subheader("📊 예측 범위 시각화")
+    # Plotly Bar Chart with Error Bars (깔끔한 가로형 바)
+    fig_bar = go.Figure()
+    fig_bar.add_trace(go.Bar(
+        y=['생산량'], x=[pred_val],
+        orientation='h',
+        marker_color='#2980b9',
+        error_x=dict(type='data', array=[upper_val-pred_val], arrayminus=[pred_val-lower_val], color='red', width=5),
+        text=[f"{pred_val:.1f}"], textposition='auto',
+        hoverinfo='x+y'
+    ))
+    fig_bar.update_layout(
+        height=280,
+        margin=dict(l=20, r=20, t=30, b=20),
+        xaxis=dict(title="Production (Tons)", range=[lower_val*0.8, upper_val*1.1]),
+        plot_bgcolor='rgba(0,0,0,0)', # 투명 배경
+        yaxis=dict(showticklabels=False) # Y축 라벨 숨김 (깔끔하게)
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
 
-# (4) 하단: 입력 변수 진단 (Compact Row Layout)
-st.subheader("🔍 투입 조건 진단 (vs 과거 분포)")
+# --- SECTION 3: 투입 변수 진단 (Bottom Row - Bullet Charts) ---
+st.subheader("🔍 투입 변수 적정성 진단 (vs 과거 평균)")
+st.caption("파란색 막대(현재 입력)가 회색 막대(과거 평균)보다 길면, 평균보다 높게 설정된 것입니다.")
 
-# 4개의 컬럼으로 나누어 한 줄에 배치
-cols = st.columns(4) 
-vars_info = [
-    ('yield', '수율 (%)', input_yield, 'Blues'),
-    ('productivity', '생산성', input_prod, 'Greens'),
-    ('workforce', '인원 (명)', input_wf, 'Oranges'),
-    ('hour', '시간 (h)', input_hour, 'Purples')
+# 4개의 컬럼에 작은 불렛 차트 배치
+cols = st.columns(4)
+vars_config = [
+    ('yield', '수율 (%)', input_yield, means['yield'], 100),
+    ('productivity', '생산성', input_prod, means['productivity'], 2.5),
+    ('workforce', '인원 (명)', input_wf, means['workforce'], 70),
+    ('hour', '작업시간 (h)', input_hour, means['hour'], 220)
 ]
 
-for i, (col_name, title, current_val, color_theme) in enumerate(vars_info):
+for i, (col_name, title, curr, avg, max_range) in enumerate(vars_config):
     with cols[i]:
-        # 작은 그래프 생성
-        fig, ax = plt.subplots(figsize=(3, 2)) # 아주 작은 사이즈
-        
-        # KDE Plot (부드러운 곡선 분포)
-        sns.kdeplot(data=df_clean, x=col_name, fill=True, color=sns.color_palette(color_theme)[4], alpha=0.3, ax=ax)
-        
-        # 현재 값 표시 (빨간선)
-        ax.axvline(current_val, color='#FF5252', linestyle='--', linewidth=2)
-        
-        # 스타일링
-        ax.set_title(title, fontsize=10, fontweight='bold')
-        ax.set_xlabel("")
-        ax.set_ylabel("")
-        ax.set_yticks([]) # Y축 눈금 제거 (깔끔하게)
-        
-        # 현재 위치 텍스트
-        ax.text(current_val, ax.get_ylim()[1]*0.9, "Here", color='#FF5252', ha='center', fontsize=8, fontweight='bold')
-        
-        sns.despine(left=True) # 왼쪽 테두리 제거
-        st.pyplot(fig)
+        # Bullet Chart 스타일
+        fig_bullet = go.Figure(go.Indicator(
+            mode = "number+gauge",
+            value = curr,
+            domain = {'x': [0.1, 1], 'y': [0, 1]},
+            title = {'text': title, 'font': {'size': 14}},
+            number = {'font': {'size': 20}},
+            gauge = {
+                'shape': "bullet",
+                'axis': {'range': [None, max_range]},
+                'bar': {'color': "#34495e"}, # 현재값 (진한 색)
+                'bgcolor': "white",
+                'steps': [
+                    {'range': [0, avg], 'color': "#ecf0f1"} # 평균까지 (연한 회색)
+                ],
+                'threshold': {
+                    'line': {'color': "red", 'width': 2},
+                    'thickness': 0.75,
+                    'value': avg # 평균 위치에 빨간 선 표시
+                }
+            }
+        ))
+        fig_bullet.update_layout(height=120, margin=dict(l=15, r=15, t=10, b=10))
+        st.plotly_chart(fig_bullet, use_container_width=True)
