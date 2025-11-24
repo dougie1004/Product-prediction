@@ -4,16 +4,28 @@ import numpy as np
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
-import platform
+import os
 
 # -----------------------------------------------------------------------------
-# 1. 환경 설정 (한글 폰트)
+# 1. 환경 설정 (✅ 한글 폰트 깨짐 해결 - 웹에서 폰트 다운로드 방식)
 # -----------------------------------------------------------------------------
-# Streamlit Cloud(리눅스)와 로컬(윈도우) 환경 모두 대응
-if platform.system() == 'Linux':
-    plt.rc('font', family='NanumGothic') # Streamlit Cloud 기본 한글 폰트
-else:
-    plt.rc('font', family='Malgun Gothic') # 윈도우 로컬 테스트용
+@st.cache_resource
+def get_korean_font():
+    # 네이버 나눔고딕 폰트를 다운로드하여 적용합니다. (Streamlit Cloud 호환성 높음)
+    font_url = "https://github.com/google/fonts/raw/main/ofl/nanumgothic/NanumGothic-Regular.ttf"
+    font_path = "NanumGothic-Regular.ttf"
+    
+    if not os.path.exists(font_path):
+        import urllib.request
+        urllib.request.urlretrieve(font_url, font_path)
+        
+    fm.fontManager.addfont(font_path)
+    font_name = fm.FontProperties(fname=font_path).get_name()
+    return font_name
+
+# 폰트 적용 및 마이너스 기호 깨짐 방지
+font_name = get_korean_font()
+plt.rc('font', family=font_name)
 plt.rcParams['axes.unicode_minus'] = False
 
 # -----------------------------------------------------------------------------
@@ -21,11 +33,7 @@ plt.rcParams['axes.unicode_minus'] = False
 # -----------------------------------------------------------------------------
 st.set_page_config(page_title="생산량 예측 AI", layout="wide")
 
-# (1) 데이터 준비 
-# [실제 운영 시] 엑셀 파일을 같은 폴더에 넣고 아래 주석을 해제해서 쓰세요.
-# df = pd.read_excel("참치생산지표3.xlsx") 
-
-# [현재 배포용] 데모 데이터 생성 (엑셀 없이도 작동되게 함)
+# (1) 데이터 준비 (데모용)
 np.random.seed(123)
 n = 30
 df = pd.DataFrame({
@@ -36,15 +44,14 @@ df = pd.DataFrame({
     'hour': np.random.choice(range(160, 201), n)
 })
 
-# (2) 전처리: 이상치 제거 로직 (R 코드의 [-c(17,20,23)] 반영)
-# Python 인덱스는 0부터 시작하므로 16, 19, 22를 제거
+# (2) 전처리
 drop_indices = [16, 19, 22]
 df_clean = df.drop(drop_indices, errors='ignore').reset_index(drop=True)
 
-# (3) 모델 학습 (OLS 회귀분석)
+# (3) 모델 학습
 X = df_clean[['yield', 'productivity', 'workforce', 'hour']]
 y = df_clean['production']
-X = sm.add_constant(X) # 상수항 추가
+X = sm.add_constant(X)
 model = sm.OLS(y, X).fit()
 
 # -----------------------------------------------------------------------------
@@ -71,7 +78,7 @@ with col_input:
 with col_result:
     st.subheader("📈 AI 예측 결과")
     
-    # 입력값으로 예측 수행
+    # 예측 수행
     input_data = pd.DataFrame({
         'const': 1.0,
         'yield': [input_yield], 
@@ -80,9 +87,8 @@ with col_result:
         'hour': [input_hour]
     })
     
-    # 예측 및 신뢰구간 계산
     predictions = model.get_prediction(input_data)
-    pred_df = predictions.summary_frame(alpha=0.05) # 95% 신뢰구간
+    pred_df = predictions.summary_frame(alpha=0.05)
     
     pred_val = pred_df['mean'][0]
     lower_val = pred_df['obs_ci_lower'][0]
@@ -90,12 +96,21 @@ with col_result:
     
     # 핵심 지표 표시
     m1, m2, m3 = st.columns(3)
-    m1.metric("최소 예상 (보수적)", f"{lower_val:.1f} 톤")
-    m2.metric("🎯 예측 생산량", f"{pred_val:.1f} 톤", delta="Target")
-    m3.metric("최대 예상 (긍정적)", f"{upper_val:.1f} 톤")
+    m1.metric("최소 예상 (보수적)", f"{lower_val:.1f} 톤", help="95% 신뢰구간 하한값")
+    m2.metric("🎯 예측 생산량", f"{pred_val:.1f} 톤", delta="Target", help="가장 유력한 예측값")
+    m3.metric("최대 예상 (긍정적)", f"{upper_val:.1f} 톤", help="95% 신뢰구간 상한값")
     
-    # 그래프 시각화
-    fig, ax = plt.subplots(figsize=(10, 5))
+    # ✅ 그래프 설명 추가
+    st.markdown("""
+    <div style='background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-bottom: 10px; font-size: 0.9em;'>
+        <strong>💡 그래프 해석 가이드:</strong><br>
+        • <strong>초록색 막대:</strong> AI가 예측한 가장 가능성 높은 생산량입니다.<br>
+        • <strong>빨간색 선(I):</strong> 95% 신뢰구간(안전 범위)입니다. 실제 생산량이 이 빨간 선 범위 내에 있을 확률이 높다는 것을 의미합니다. (하단 점: 최소치, 상단 점: 최대치)
+    </div>
+    """, unsafe_allow_html=True)
+
+    # ✅ 그래프 크기 조절 (figsize 변경)
+    fig, ax = plt.subplots(figsize=(10, 3)) # 높이를 5에서 3으로 줄임
     
     # 바 차트 (예측값)
     ax.bar(['예상 생산량'], [pred_val], color='#2ecc71', alpha=0.7, width=0.3)
@@ -107,10 +122,13 @@ with col_result:
                 label='95% 예측 신뢰구간')
     
     # 텍스트 및 레이블
-    ax.text(0, pred_val + 2, f"{pred_val:.1f} 톤", ha='center', fontweight='bold', fontsize=14)
-    ax.set_ylim(lower_val * 0.8, upper_val * 1.2)
+    ax.text(0, pred_val + (upper_val - lower_val)*0.05, f"{pred_val:.1f} 톤", ha='center', fontweight='bold', fontsize=12)
+    ax.set_ylim(lower_val * 0.9, upper_val * 1.1) # Y축 범위 여백 조정
     ax.set_ylabel('생산량 (톤)')
     ax.grid(axis='y', linestyle='--', alpha=0.5)
-    ax.legend()
+    # ax.legend() # 범례는 설명 박스로 대체하여 주석 처리
+
+    # 그래프 여백 조정 (꽉 차게)
+    plt.tight_layout()
     
     st.pyplot(fig)
