@@ -5,43 +5,34 @@ import statsmodels.api as sm
 import plotly.graph_objects as go
 
 # -----------------------------------------------------------------------------
-# 1. 화면 구성 설정 (CSS Hack for Compact Layout)
+# 1. 페이지 및 디자인 설정 (제목 잘림 해결 & 깔끔한 여백)
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="Production Dashboard", layout="wide")
+st.set_page_config(page_title="Executive Production Dashboard", layout="wide")
 
-# CSS: 여백 최소화 및 폰트 사이즈 조절
 st.markdown("""
 <style>
-    /* 상단 여백 대폭 축소 */
+    /* 제목이 잘리지 않도록 상단 여백 확보 (1rem -> 3rem) */
     .block-container {
-        padding-top: 1rem !important;
-        padding-bottom: 0rem !important;
-        padding-left: 1rem !important;
-        padding-right: 1rem !important;
+        padding-top: 3rem !important; 
+        padding-bottom: 2rem !important;
     }
-    /* 제목 및 헤더 여백 축소 */
-    h1 { margin-bottom: 0px !important; font-size: 1.5rem !important; }
-    h3 { margin-top: 10px !important; margin-bottom: 5px !important; font-size: 1.1rem !important; }
-    
-    /* KPI 메트릭 카드 디자인 및 여백 축소 */
+    /* KPI 박스 디자인 */
     div[data-testid="metric-container"] {
         background-color: #f8f9fa;
-        border: 1px solid #e9ecef;
-        padding: 5px 10px;
-        border-radius: 5px;
-        box-shadow: 1px 1px 3px rgba(0,0,0,0.05);
+        border: 1px solid #dee2e6;
+        padding: 15px;
+        border-radius: 8px;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.05);
     }
-    div[data-testid="stMetricLabel"] { font-size: 0.8rem !important; }
-    div[data-testid="stMetricValue"] { font-size: 1.2rem !important; }
-    
-    /* 그래프 간격 조절 */
-    .js-plotly-plot { margin-bottom: 0px !important; }
+    /* 헤더 폰트 조정 */
+    h1 { margin-top: 0px; }
 </style>
 """, unsafe_allow_html=True)
 
 # -----------------------------------------------------------------------------
-# 2. 데이터 및 모델링
+# 2. 데이터 및 모델링 (Back-end)
 # -----------------------------------------------------------------------------
+# (1) 데이터 준비
 np.random.seed(123)
 n = 30
 df = pd.DataFrame({
@@ -52,6 +43,7 @@ df = pd.DataFrame({
     'hour': np.random.choice(range(160, 201), n)
 })
 
+# (2) 전처리 & 모델링
 drop_indices = [16, 19, 22]
 df_clean = df.drop(drop_indices, errors='ignore').reset_index(drop=True)
 
@@ -59,53 +51,69 @@ X = df_clean[['yield', 'productivity', 'workforce', 'hour']]
 y = df_clean['production']
 X = sm.add_constant(X)
 model = sm.OLS(y, X).fit()
+
 means = df_clean.mean()
 
 # -----------------------------------------------------------------------------
-# 3. 사이드바 (Inputs)
+# 3. 사이드바 (Input Control)
 # -----------------------------------------------------------------------------
 with st.sidebar:
-    st.title("🎛️ Control Panel")
+    st.header("🎛️ Simulation Control")
+    st.info("Change inputs to simulate outcomes.")
+    st.markdown("---")
+    
     input_yield = st.slider("수율 (Yield, %)", 80.0, 95.0, 88.0, step=0.1)
-    input_prod = st.slider("생산성 (Index)", 1.0, 2.0, 1.5, step=0.1)
-    input_wf = st.slider("투입 인원 (명)", 40, 60, 50, step=1)
-    input_hour = st.slider("작업 시간 (h)", 160, 200, 180, step=1)
-    st.divider()
-    st.caption(f"Model Accuracy ($R^2$): {model.rsquared:.2f}")
+    input_prod = st.slider("생산성 (Productivity)", 1.0, 2.0, 1.5, step=0.1)
+    input_wf = st.slider("투입 인원 (Workforce)", 40, 60, 50, step=1)
+    input_hour = st.slider("작업 시간 (Hour)", 160, 200, 180, step=1)
+    
+    st.markdown("---")
+    st.caption(f"Model Accuracy ($R^2$): **{model.rsquared:.2f}**")
 
 # -----------------------------------------------------------------------------
-# 4. 메인 대시보드 (Layout)
+# 4. 메인 대시보드 (Dashboard UI)
 # -----------------------------------------------------------------------------
-# (1) 헤더 및 KPI 영역
 st.title("🏭 생산 실적 예측 대시보드")
+st.markdown("AI-driven Production Forecasting & Risk Analysis")
+st.markdown("---")
 
-# 예측 계산
+# (1) 예측 계산
 input_data = pd.DataFrame({'const': 1.0, 'yield': [input_yield], 'productivity': [input_prod], 'workforce': [input_wf], 'hour': [input_hour]})
 predictions = model.get_prediction(input_data)
 pred_df = predictions.summary_frame(alpha=0.05)
 pred_val = pred_df['mean'][0]
 lower_val, upper_val = pred_df['obs_ci_lower'][0], pred_df['obs_ci_upper'][0]
 
-# KPI 배치 (Top Row)
-k1, k2, k3, k4 = st.columns(4)
-k1.metric("예측 생산량 (Target)", f"{pred_val:.1f} 톤", delta=f"{pred_val - means['production']:.1f}")
-k2.metric("최소 보장 (Risk Min)", f"{lower_val:.1f} 톤", delta_color="off")
-k3.metric("최대 가능 (Max)", f"{upper_val:.1f} 톤", delta_color="off")
-k4.metric("목표 달성률 (Ref. 100t)", f"{(pred_val/100)*100:.1f}%")
+# --- SECTION 1: 핵심 KPI (Top Row) ---
+col1, col2, col3, col4 = st.columns(4)
 
-# (2) 메인 차트 영역 (Middle Row)
-# 높이를 220px로 줄여서 한 화면에 들어오게 함
-c_left, c_right = st.columns([1, 2]) # 비율 1:2
+with col1:
+    st.metric("예측 생산량 (Target)", f"{pred_val:.1f} 톤", delta=f"{pred_val - means['production']:.1f} vs Avg")
+with col2:
+    st.metric("최소 보장 (Risk Min)", f"{lower_val:.1f} 톤", delta="- Conservative", delta_color="off")
+with col3:
+    st.metric("최대 가능 (Max)", f"{upper_val:.1f} 톤", delta="+ Optimistic", delta_color="off")
+with col4:
+    achievement = (pred_val / 100) * 100
+    st.metric("목표 달성률 (Ref. 100t)", f"{achievement:.1f}%")
+
+st.write("") # 간격 추가
+
+# --- SECTION 2: 메인 차트 (Middle Row) ---
+c_left, c_right = st.columns([1, 2])
 
 with c_left:
     st.subheader("🎯 예측 계기판")
+    # Gauge Chart
     fig_gauge = go.Figure(go.Indicator(
         mode = "gauge+number",
         value = pred_val,
-        number = {'font': {'size': 24}}, # 글자 크기 최적화
+        domain = {'x': [0, 1], 'y': [0, 1]},
+        number = {'suffix': " 톤", 'font': {'size': 20}},
         gauge = {
-            'axis': {'range': [lower_val*0.8, upper_val*1.1]},
+            'axis': {'range': [lower_val*0.8, upper_val*1.1], 'tickwidth': 1},
             'bar': {'color': "#2ecc71"},
+            'bgcolor': "white",
             'steps': [
                 {'range': [lower_val*0.8, lower_val], 'color': '#ffcdd2'},
                 {'range': [lower_val, upper_val], 'color': '#f1f8e9'}
@@ -113,55 +121,65 @@ with c_left:
             'threshold': {'line': {'color': "red", 'width': 4}, 'thickness': 0.75, 'value': pred_val}
         }
     ))
-    # 마진 제거 및 높이 축소
-    fig_gauge.update_layout(height=200, margin=dict(l=10, r=10, t=30, b=10)) 
+    fig_gauge.update_layout(height=280, margin=dict(l=20, r=20, t=30, b=20))
     st.plotly_chart(fig_gauge, use_container_width=True)
 
 with c_right:
     st.subheader("📊 예측 범위 상세")
+    # Bar Chart (Tooltip Fixed)
     fig_bar = go.Figure()
     fig_bar.add_trace(go.Bar(
         y=['생산량'], x=[pred_val],
         orientation='h',
         marker_color='#2980b9',
-        error_x=dict(type='data', array=[upper_val-pred_val], arrayminus=[pred_val-lower_val], color='red', width=3),
-        text=[f"{pred_val:.1f}"], textposition='auto'
+        error_x=dict(type='data', array=[upper_val-pred_val], arrayminus=[pred_val-lower_val], color='red', width=5),
+        text=[f"{pred_val:.1f} 톤"], 
+        textposition='auto',
+        # [중요] 툴팁 포맷 설정: 소수점 1자리까지만 표시
+        hovertemplate='<b>예측값:</b> %{x:.1f} 톤<br>' +
+                      '<b>안전 범위:</b> ±' + f"{(upper_val-lower_val)/2:.1f} 톤" + 
+                      '<extra></extra>' 
     ))
     fig_bar.update_layout(
-        height=200, # 높이 축소
-        margin=dict(l=10, r=10, t=10, b=10),
-        xaxis=dict(range=[lower_val*0.8, upper_val*1.1]),
+        height=280,
+        margin=dict(l=20, r=20, t=30, b=20),
+        xaxis=dict(title="Production (Tons)", range=[lower_val*0.8, upper_val*1.1]),
+        plot_bgcolor='rgba(0,0,0,0)',
         yaxis=dict(showticklabels=False),
-        plot_bgcolor='rgba(0,0,0,0)'
+        hoverlabel=dict(bgcolor="white", font_size=14) # 툴팁 디자인
     )
     st.plotly_chart(fig_bar, use_container_width=True)
 
-# (3) 하단 입력 변수 진단 (Bottom Row)
-st.subheader("🔍 변수 적정성 진단 (vs 과거 평균)")
+# --- SECTION 3: 투입 변수 진단 (Bottom Row) ---
+st.subheader("🔍 투입 변수 적정성 진단")
+st.caption("현재 계획(진한 막대) vs 과거 평균(연한 회색)")
 
 cols = st.columns(4)
 vars_config = [
-    ('yield', '수율', input_yield, means['yield'], 100),
+    ('yield', '수율 (%)', input_yield, means['yield'], 100),
     ('productivity', '생산성', input_prod, means['productivity'], 2.5),
-    ('workforce', '인원', input_wf, means['workforce'], 70),
-    ('hour', '시간', input_hour, means['hour'], 220)
+    ('workforce', '인원 (명)', input_wf, means['workforce'], 70),
+    ('hour', '작업시간 (h)', input_hour, means['hour'], 220)
 ]
 
-for i, (col_name, title, curr, avg, max_val) in enumerate(vars_config):
+for i, (col_name, title, curr, avg, max_range) in enumerate(vars_config):
     with cols[i]:
         fig_bullet = go.Figure(go.Indicator(
             mode = "number+gauge",
             value = curr,
-            title = {'text': title, 'font': {'size': 12}}, # 폰트 작게
+            domain = {'x': [0.1, 1], 'y': [0, 1]},
+            title = {'text': title, 'font': {'size': 14}},
             number = {'font': {'size': 18}},
             gauge = {
                 'shape': "bullet",
-                'axis': {'range': [None, max_val]},
+                'axis': {'range': [None, max_range]},
                 'bar': {'color': "#34495e"},
+                'bgcolor': "white",
                 'steps': [{'range': [0, avg], 'color': "#ecf0f1"}],
                 'threshold': {'line': {'color': "red", 'width': 2}, 'thickness': 0.75, 'value': avg}
             }
         ))
-        # 불필요한 마진 제거 및 초소형 높이 설정
-        fig_bullet.update_layout(height=80, margin=dict(l=10, r=10, t=10, b=10))
+        # 툴팁 간단하게 설정
+        fig_bullet.update_traces(hovertemplate=f"<b>{title}</b><br>입력값: %{{x}}<br>평균: {avg:.1f}<extra></extra>")
+        fig_bullet.update_layout(height=120, margin=dict(l=15, r=15, t=10, b=10))
         st.plotly_chart(fig_bullet, use_container_width=True)
