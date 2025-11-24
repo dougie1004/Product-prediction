@@ -11,12 +11,12 @@ st.set_page_config(page_title="Executive Production Dashboard", layout="wide")
 
 st.markdown("""
 <style>
-    /* 1. 제목 잘림 방지 (상단 여백 확보) */
+    /* 제목 잘림 방지 (상단 여백 확보) */
     .block-container {
         padding-top: 3rem !important; 
         padding-bottom: 2rem !important;
     }
-    /* 2. KPI 박스 입체감 주기 */
+    /* KPI 박스 디자인 */
     div[data-testid="metric-container"] {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -24,7 +24,7 @@ st.markdown("""
         border-radius: 10px;
         box-shadow: 0 4px 6px rgba(0,0,0,0.05);
     }
-    /* 3. 전체 배경색 미세 조정 (옵션) */
+    /* 전체 배경색 */
     .stApp {
         background-color: #f8f9fa;
     }
@@ -34,7 +34,7 @@ st.markdown("""
 # -----------------------------------------------------------------------------
 # 2. 데이터 및 모델링 (Back-end)
 # -----------------------------------------------------------------------------
-# (1) 데이터 준비 (데모 데이터)
+# (1) 데이터 준비
 np.random.seed(123)
 n = 30
 df = pd.DataFrame({
@@ -54,7 +54,6 @@ y = df_clean['production']
 X = sm.add_constant(X)
 model = sm.OLS(y, X).fit()
 
-# 과거 데이터 평균값 (비교 기준용)
 means = df_clean.mean()
 
 # -----------------------------------------------------------------------------
@@ -79,7 +78,7 @@ with st.sidebar:
 # -----------------------------------------------------------------------------
 st.title("🏭 생산 실적 예측 대시보드")
 st.markdown("**AI-driven Production Forecasting & Risk Analysis**")
-st.write("") # 여백 추가
+st.write("") 
 
 # (1) 예측 계산 Logic
 input_data = pd.DataFrame({'const': 1.0, 'yield': [input_yield], 'productivity': [input_prod], 'workforce': [input_wf], 'hour': [input_hour]})
@@ -110,7 +109,8 @@ c_left, c_right = st.columns([1, 2])
 
 with c_left:
     st.subheader("🎯 예측 계기판")
-    # Gauge Chart (속도계 스타일)
+    
+    # [수정] 오류 방지를 위해 줄바꿈을 명확하게 처리했습니다.
     fig_gauge = go.Figure(go.Indicator(
         mode = "gauge+number",
         value = pred_val,
@@ -118,10 +118,75 @@ with c_left:
         number = {'suffix': " 톤", 'font': {'size': 24, 'color': '#2c3e50'}},
         gauge = {
             'axis': {'range': [lower_val*0.8, upper_val*1.1], 'tickwidth': 1},
-            'bar': {'color': "#2ecc71"}, # 초록색 바
+            'bar': {'color': "#2ecc71"},
             'bgcolor': "white",
             'steps': [
-                {'range': [lower_val*0.8, lower_val], 'color': '#ffcdd2'}, # 붉은색(위험)
-                {'range': [lower_val, upper_val], 'color': '#f1f8e9'}      # 연두색(안전)
+                {'range': [lower_val*0.8, lower_val], 'color': '#ffcdd2'},
+                {'range': [lower_val, upper_val], 'color': '#f1f8e9'}
             ],
-            'threshold': {'line': {'color': "red", 'width': 4}, 'thickness':
+            'threshold': {
+                'line': {'color': "red", 'width': 4}, 
+                'thickness': 0.75, 
+                'value': pred_val
+            }
+        }
+    ))
+    fig_gauge.update_layout(height=300, margin=dict(l=20, r=20, t=30, b=20), paper_bgcolor='rgba(0,0,0,0)')
+    st.plotly_chart(fig_gauge, use_container_width=True)
+
+with c_right:
+    st.subheader("📊 예측 범위 상세 분석")
+    
+    fig_bar = go.Figure()
+    fig_bar.add_trace(go.Bar(
+        y=['생산량'], x=[pred_val],
+        orientation='h',
+        marker_color='#3498db',
+        error_x=dict(type='data', array=[upper_val-pred_val], arrayminus=[pred_val-lower_val], color='#e74c3c', width=6),
+        text=[f"{pred_val:.1f} 톤"], 
+        textposition='auto',
+        hovertemplate='<b>예측값:</b> %{x:.1f} 톤<br>' +
+                      '<b>안전 범위:</b> ±' + f"{(upper_val-lower_val)/2:.1f} 톤" + 
+                      '<extra></extra>' 
+    ))
+    fig_bar.update_layout(
+        height=300,
+        margin=dict(l=20, r=20, t=30, b=20),
+        xaxis=dict(title="Production (Tons)", range=[lower_val*0.8, upper_val*1.1]),
+        plot_bgcolor='rgba(0,0,0,0)',
+        yaxis=dict(showticklabels=False),
+        hoverlabel=dict(bgcolor="white", font_size=14)
+    )
+    st.plotly_chart(fig_bar, use_container_width=True)
+
+# --- SECTION 3: 투입 변수 진단 (Bottom Row) ---
+st.subheader("🔍 투입 변수 적정성 진단")
+st.caption("파란색 막대(현재 계획) vs 회색 구간(과거 평균 범위)")
+
+cols = st.columns(4)
+vars_config = [
+    ('yield', '수율 (%)', input_yield, means['yield'], 100),
+    ('productivity', '생산성', input_prod, means['productivity'], 2.5),
+    ('workforce', '인원 (명)', input_wf, means['workforce'], 70),
+    ('hour', '작업시간 (h)', input_hour, means['hour'], 220)
+]
+
+for i, (col_name, title, curr, avg, max_range) in enumerate(vars_config):
+    with cols[i]:
+        fig_bullet = go.Figure(go.Indicator(
+            mode = "number+gauge",
+            value = curr,
+            domain = {'x': [0.1, 1], 'y': [0, 1]},
+            title = {'text': title, 'font': {'size': 15, 'color': 'gray'}},
+            number = {'font': {'size': 22, 'color': '#2c3e50'}},
+            gauge = {
+                'shape': "bullet",
+                'axis': {'range': [None, max_range]},
+                'bar': {'color': "#34495e"},
+                'bgcolor': "white",
+                'steps': [{'range': [0, avg], 'color': "#ecf0f1"}],
+                'threshold': {'line': {'color': "#e74c3c", 'width': 3}, 'thickness': 0.75, 'value': avg}
+            }
+        ))
+        fig_bullet.update_layout(height=130, margin=dict(l=15, r=15, t=10, b=10), paper_bgcolor='rgba(0,0,0,0)')
+        st.plotly_chart(fig_bullet, use_container_width=True)
