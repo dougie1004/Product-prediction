@@ -4,10 +4,11 @@ import numpy as np
 import statsmodels.api as sm
 import matplotlib.pyplot as plt
 import matplotlib.font_manager as fm
+import seaborn as sns
 import os
 
 # -----------------------------------------------------------------------------
-# 1. 환경 설정 (한글 폰트 자동 다운로드 및 적용)
+# 1. 환경 설정 (폰트 및 스타일)
 # -----------------------------------------------------------------------------
 @st.cache_resource
 def get_korean_font():
@@ -23,10 +24,14 @@ font_name = get_korean_font()
 plt.rc('font', family=font_name)
 plt.rcParams['axes.unicode_minus'] = False
 
+# Seaborn 스타일 설정 (깔끔한 디자인)
+sns.set_style("whitegrid")
+plt.rcParams['font.family'] = font_name # Seaborn 적용 후 폰트 재설정
+
 # -----------------------------------------------------------------------------
 # 2. 데이터 및 모델링
 # -----------------------------------------------------------------------------
-st.set_page_config(page_title="생산량 예측 AI", layout="wide")
+st.set_page_config(page_title="생산량 예측 대시보드", layout="wide")
 
 # (1) 데이터 준비
 np.random.seed(123)
@@ -39,7 +44,7 @@ df = pd.DataFrame({
     'hour': np.random.choice(range(160, 201), n)
 })
 
-# (2) 전처리 (이상치 제거)
+# (2) 전처리
 drop_indices = [16, 19, 22]
 df_clean = df.drop(drop_indices, errors='ignore').reset_index(drop=True)
 
@@ -50,112 +55,108 @@ X = sm.add_constant(X)
 model = sm.OLS(y, X).fit()
 
 # -----------------------------------------------------------------------------
-# 3. 사용자 인터페이스 (UI)
+# 3. 사이드바 (입력 컨트롤) - 공간 절약
 # -----------------------------------------------------------------------------
-st.title("🐟 참치 생산 실적 예측 시뮬레이터")
-st.markdown("과거 데이터를 기반으로 **투입 조건에 따른 예상 생산량**을 산출하고, **입력값의 적정성**을 진단합니다.")
-st.divider()
-
-col_input, col_result = st.columns([1, 2])
-
-# --- [좌측] 입력 패널 ---
-with col_input:
-    st.subheader("🛠️ 생산 조건 입력")
-    st.info("오늘의 작업 계획을 입력하세요.")
+with st.sidebar:
+    st.header("🎛️ 시뮬레이션 설정")
+    st.info("조건을 변경하면 실시간으로 반영됩니다.")
     
-    # 슬라이더 설정
     input_yield = st.slider("수율 (Yield, %)", 80.0, 95.0, 88.0, step=0.1)
     input_prod = st.slider("생산성 (Productivity)", 1.0, 2.0, 1.5, step=0.1)
     input_wf = st.slider("투입 인원 (Workforce, 명)", 40, 60, 50, step=1)
     input_hour = st.slider("작업 시간 (Hour, 시간)", 160, 200, 180, step=1)
     
-    st.write("---")
-    with st.expander("📊 모델 통계 (Summary)"):
-        st.code(str(model.summary()))
+    st.markdown("---")
+    with st.expander("ℹ️ 모델 통계 정보"):
+        st.caption(f"R-squared: {model.rsquared:.3f}")
+        st.caption("Data Source: 2020.01 ~ 2022.04")
 
-# --- [우측] 결과 패널 ---
-with col_result:
-    # 1. 예측 계산
-    input_data = pd.DataFrame({
-        'const': 1.0,
-        'yield': [input_yield], 
-        'productivity': [input_prod], 
-        'workforce': [input_wf], 
-        'hour': [input_hour]
-    })
+# -----------------------------------------------------------------------------
+# 4. 메인 대시보드 (결과 시각화)
+# -----------------------------------------------------------------------------
+st.title("📊 참치 생산 실적 예측 대시보드")
+st.markdown("##### AI 기반 생산량 예측 및 공정 변수 진단")
+
+# (1) 예측 계산
+input_data = pd.DataFrame({'const': 1.0, 'yield': [input_yield], 'productivity': [input_prod], 'workforce': [input_wf], 'hour': [input_hour]})
+predictions = model.get_prediction(input_data)
+pred_df = predictions.summary_frame(alpha=0.05)
+pred_val = pred_df['mean'][0]
+lower_val, upper_val = pred_df['obs_ci_lower'][0], pred_df['obs_ci_upper'][0]
+
+# (2) 상단: 핵심 지표 (KPI)
+kpi1, kpi2, kpi3 = st.columns(3)
+kpi1.metric("📉 최소 예상 (Risk)", f"{lower_val:.1f} 톤")
+kpi2.metric("🎯 예측 생산량 (Target)", f"{pred_val:.1f} 톤", delta_color="normal")
+kpi3.metric("📈 최대 예상 (Max)", f"{upper_val:.1f} 톤")
+
+st.markdown("---")
+
+# (3) 중단: 메인 예측 그래프 (Slim Layout)
+c1, c2 = st.columns([3, 1]) # 그래프 공간을 넓게, 설명 공간을 좁게
+
+with c1:
+    st.subheader("예측 구간 시각화")
+    fig_main, ax = plt.subplots(figsize=(10, 1.5)) # 높이를 매우 낮게 설정 (Slim)
     
-    predictions = model.get_prediction(input_data)
-    pred_df = predictions.summary_frame(alpha=0.05)
+    # 그라데이션 느낌의 바 차트
+    ax.barh(0, pred_val, color='#00C853', alpha=0.8, height=0.6, label='예측값')
     
-    pred_val = pred_df['mean'][0]
-    lower_val = pred_df['obs_ci_lower'][0]
-    upper_val = pred_df['obs_ci_upper'][0]
+    # 에러바 (신뢰구간)
+    ax.errorbar(pred_val, 0, xerr=[[pred_val - lower_val], [upper_val - pred_val]], 
+                fmt='o', color='#D50000', ecolor='gray', elinewidth=2, capsize=5, markersize=8)
     
-    # 2. 메인 결과 (Metrics)
-    st.subheader("📈 AI 예측 결과")
-    m1, m2, m3 = st.columns(3)
-    m1.metric("최소 예상", f"{lower_val:.1f} 톤")
-    m2.metric("🎯 예측 생산량", f"{pred_val:.1f} 톤", delta="Target")
-    m3.metric("최대 예상", f"{upper_val:.1f} 톤")
+    # 텍스트 레이블 (바 끝에 표시)
+    ax.text(pred_val + 2, 0, f"{pred_val:.1f} 톤", va='center', fontweight='bold', fontsize=12, color='#1b5e20')
     
-    # 3. 예측 그래프 (Production Graph)
-    fig_main, ax_main = plt.subplots(figsize=(10, 2.5))
-    ax_main.barh(['생산량'], [pred_val], color='#2ecc71', alpha=0.7, height=0.4)
-    ax_main.errorbar([pred_val], ['생산량'], xerr=[[pred_val - lower_val], [upper_val - pred_val]], 
-                     fmt='o', color='red', ecolor='gray', elinewidth=3, capsize=5)
+    # 스타일링
+    ax.set_yticks([]) # Y축 라벨 제거
+    ax.set_xlim(lower_val * 0.9, upper_val * 1.1)
+    ax.set_xlabel("생산량 (톤)")
+    ax.grid(axis='x', linestyle='--', alpha=0.5)
     
-    # 그래프 꾸미기
-    ax_main.set_xlim(lower_val * 0.9, upper_val * 1.1)
-    ax_main.set_xlabel('생산량 (톤)')
-    ax_main.grid(axis='x', linestyle='--', alpha=0.5)
-    ax_main.text(pred_val, 0.3, f"{pred_val:.1f} 톤", ha='center', fontweight='bold', fontsize=12)
+    # 테두리 제거 (깔끔하게)
+    sns.despine(left=True, bottom=False)
     st.pyplot(fig_main)
-    
-    st.write("---")
-    
-    # 4. 입력 변수 진단 그래프 (Input Analysis Graphs)
-    st.subheader("🔍 투입 조건 진단 (vs 과거 데이터)")
-    st.markdown("""
-    <div style='font-size: 0.9em; color: gray; margin-bottom: 10px;'>
-    • <b>회색 막대:</b> 과거 실제 데이터 분포 &nbsp;&nbsp; | &nbsp;&nbsp; 
-    • <b>빨간 선:</b> 현재 입력한 계획 값 &nbsp;&nbsp; | &nbsp;&nbsp; 
-    • <b>파란 점선:</b> 과거 평균
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # 4개 변수 시각화를 위한 서브플롯 생성
-    fig_sub, axes = plt.subplots(2, 2, figsize=(10, 6))
-    plt.subplots_adjust(hspace=0.4, wspace=0.3)
-    
-    # 변수 매핑 정보
-    vars_info = [
-        ('yield', '수율 (%)', input_yield),
-        ('productivity', '생산성 지표', input_prod),
-        ('workforce', '투입 인원 (명)', input_wf),
-        ('hour', '작업 시간 (h)', input_hour)
-    ]
-    
-    # 반복문으로 4개 그래프 그리기
-    for idx, (col, title, current_val) in enumerate(vars_info):
-        row, col_idx = divmod(idx, 2)
-        ax = axes[row, col_idx]
-        
-        # 히스토그램 (과거 데이터 분포)
-        ax.hist(df_clean[col], bins=10, color='lightgray', edgecolor='white', label='과거 분포')
-        
-        # 현재 입력값 (빨간 실선)
-        ax.axvline(current_val, color='#e74c3c', linewidth=2, linestyle='-', label='현재 입력')
-        
-        # 과거 평균값 (파란 점선)
-        mean_val = df_clean[col].mean()
-        ax.axvline(mean_val, color='#3498db', linewidth=1.5, linestyle='--', label='과거 평균')
-        
-        # 디자인
-        ax.set_title(title, fontsize=11, fontweight='bold')
-        ax.grid(axis='y', linestyle=':', alpha=0.5)
-        
-        # 현재 값이 평균과 많이 차이나면 텍스트로 표시
-        if idx == 0: # 첫 번째 그래프에만 범례 표시 (깔끔하게)
-            ax.legend(loc='upper right', fontsize=8)
 
-    st.pyplot(fig_sub)
+with c2:
+    st.info("""
+    **그래프 보는 법**
+    * **초록 막대:** 예측값
+    * **빨간 점:** 95% 신뢰구간
+    """)
+
+# (4) 하단: 입력 변수 진단 (Compact Row Layout)
+st.subheader("🔍 투입 조건 진단 (vs 과거 분포)")
+
+# 4개의 컬럼으로 나누어 한 줄에 배치
+cols = st.columns(4) 
+vars_info = [
+    ('yield', '수율 (%)', input_yield, 'Blues'),
+    ('productivity', '생산성', input_prod, 'Greens'),
+    ('workforce', '인원 (명)', input_wf, 'Oranges'),
+    ('hour', '시간 (h)', input_hour, 'Purples')
+]
+
+for i, (col_name, title, current_val, color_theme) in enumerate(vars_info):
+    with cols[i]:
+        # 작은 그래프 생성
+        fig, ax = plt.subplots(figsize=(3, 2)) # 아주 작은 사이즈
+        
+        # KDE Plot (부드러운 곡선 분포)
+        sns.kdeplot(data=df_clean, x=col_name, fill=True, color=sns.color_palette(color_theme)[4], alpha=0.3, ax=ax)
+        
+        # 현재 값 표시 (빨간선)
+        ax.axvline(current_val, color='#FF5252', linestyle='--', linewidth=2)
+        
+        # 스타일링
+        ax.set_title(title, fontsize=10, fontweight='bold')
+        ax.set_xlabel("")
+        ax.set_ylabel("")
+        ax.set_yticks([]) # Y축 눈금 제거 (깔끔하게)
+        
+        # 현재 위치 텍스트
+        ax.text(current_val, ax.get_ylim()[1]*0.9, "Here", color='#FF5252', ha='center', fontsize=8, fontweight='bold')
+        
+        sns.despine(left=True) # 왼쪽 테두리 제거
+        st.pyplot(fig)
